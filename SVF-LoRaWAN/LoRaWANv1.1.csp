@@ -1,0 +1,353 @@
+﻿#import "PAT.Lib.Queue";
+#import "PAT.Lib.Array";
+#import"PAT.Lib.LoRaWANclass1";
+
+#define ED 2;
+#define JS 1;
+#define AS 1;
+#define NonceNum 5;
+#define MAX_FCNT_GAP 5;
+enum{Join_Request,Join_Accept,AesEncrypt,AesDecrypt};
+enum{JoinType,DLSettings,RxDelay,CFList,ConfirmData,Ack,ChangeData};
+channel ComEN[ED*JS] 0;
+channel ComNA[JS*AS] 0;
+channel FakeIE[ED] 0;
+channel FakeIN[JS] 0;
+channel FakeIA[AS] 0;
+
+var oldDevNonce=-1;
+var DevNonce=0;
+var JoinNonce=0;
+var JSDevNonce=0;
+var EDJoinNonce=0;
+var EDFCntUp[ED]=[5,0];
+var EDFCntDown[ED]=[0,0];
+var JSFCntUp[ED]=[5,0];
+var JSFCntDown[ED]=[0,0];
+var ConfFCnt[ED]=[0,0];
+var MIC1[4];
+var MIC1_1[4];
+var array[4]=[1,2,3,4];
+var MIC2[4];
+var MIC2_1[4];
+var MIC3[4];
+var MIC3_1[4];
+var MIC4[4];
+var MIC4_1[4];
+var FakeMIC3[4];
+var check_MIC1 = true;
+var check_MIC2 = true;
+var check_MIC3 = true;
+var check_MIC4 = true;
+var check_DevNonce = true;
+var check_JoinNonce = true; 
+var check_sessionKey = true;
+var availability = false;
+var check_FCnt = true;
+var join_success = false;
+var successdataleakage = false; 
+var successreplayattack = false;
+var successdosattack = false;
+var successbitflipattack = false;
+var successackspoofattack =false;
+var successmitmattack = false;
+
+var AppSKey[16];
+var FNwkSIntKey[16];
+var SNwkSIntKey[16];
+var NwkSEncKey[16];
+
+var AppSKey_JS[16];
+var FNwkSIntKey_JS[16];
+var SNwkSIntKey_JS[16];
+var NwkSEncKey_JS[16];
+var JSIntKey[16];
+var JoinEUI[AS] = [1];
+var DevEUI[ED] = [1,2];
+var NetID[JS] = [1];
+var DevAddr[ED] = [3,4];
+var AppKey[ED]=[0,1];
+var NwkKey[ED]=[3,4];
+var cond1;
+var cond2;
+var cond3;
+var cond4;
+var a=5;
+var b=5;
+var c=5;
+
+/*Model Join Procedure*/
+//Model end-device during Join Procedure
+ED_Join(i,j,k,InturderCond) = IncreaseDevNonce{DevNonce++;}
+                -> Compute_mic1{MIC1=call(Aes128_cmac,NwkKey[i],[JoinEUI[k],DevEUI[i],DevNonce],3)}
+                -> if (InturderCond) {ED_Join_fake(i,j,k,DevNonce,MIC1)} else {ED_Join_com(i,j,k,DevNonce,MIC1)};
+                
+ED_Join_com(i,j,k,devnonce,mic1) = ComEN[j+i*JS]!Join_Request.JoinEUI[k].DevEUI[i].DevNonce.mic1 -> (ED_Join_com_2(i,j,k,DevNonce)[*] Skip);
+ED_Join_fake(i,j,k,devnonce,mic1) = FakeIE[i]!Join_Request.JoinEUI[k].DevEUI[i].DevNonce.MIC1 -> (ED_Join_fake_2(i,j,k,DevNonce)[*] Skip); 
+             
+ED_Join_com_2(i,j,k,devnonce) = ComEN[j+i*JS]?Join_Accept.AesDecrypt.joinnonce.netid.devaddr.dlsettings.rxdelay.cflist.mic2 
+                            -> Check_JoinNonce{if(joinnonce > EDJoinNonce){check_JoinNonce=true;EDJoinNonce=joinnonce}else{check_JoinNonce=false};}
+                            -> if(check_JoinNonce==true){ED_Join_3(i,j,k,devnonce,joinnonce,netid,devaddr,dlsettings,rxdelay,cflist,mic2)}else{Skip};
+ED_Join_fake_2(i,j,k,devnonce)= FakeIE[i]?Join_Accept.AesDecrypt.joinnonce.netid.devaddr.dlsettings.rxdelay.cflist.mic2 
+                           -> Check_JoinNonce{if(joinnonce > EDJoinNonce){check_JoinNonce=true;EDJoinNonce=joinnonce}else{check_JoinNonce=false};}
+                            -> if(check_JoinNonce==true){ED_Join_3(i,j,k,devnonce,joinnonce,netid,devaddr,dlsettings,rxdelay,cflist,mic2)}else{Skip};
+                        
+ED_Join_3(i,j,k,devnonce,joinnonce,netid,devaddr,dlsettings,rxdelay,cflist,mic2) = 
+                                Compute_mic2_1{MIC2_1=call(Aes128_cmac2,JSIntKey,[JoinType,JoinEUI[k],devnonce,joinnonce,netid,devaddr,dlsettings,rxdelay,cflist],9);}
+                             -> Check_mic2{check_MIC2=call(CheckMIC,mic2,MIC2_1);}
+                             -> if(check_MIC2==true){Compute_SessionKey{join_success=true;
+                                                                       AppSKey=call(Aes128_encrypt,AppKey[i],[joinnonce,JoinEUI[k],devnonce],3,2);
+                                                                       FNwkSIntKey=call(Aes128_encrypt,NwkKey[i],[joinnonce,JoinEUI[k],devnonce],3,1);
+                                                                       SNwkSIntKey=call(Aes128_encrypt,NwkKey[i],[joinnonce,JoinEUI[k],devnonce],3,3);
+                                                                       NwkSEncKey=call(Aes128_encrypt,NwkKey[i],[joinnonce,JoinEUI[k],devnonce],3,4)}
+                                                      ->Skip}
+                                else{Skip};
+
+//Model network server during Join Procedure
+JS_Join(i,j,k,InturderCond) = if (InturderCond) {JS_Join_fake(i,j,k)} else {JS_Join_com(i,j,k)};
+
+JS_Join_com(i,j,k) = ComEN[j+i*JS]?Join_Request.joineui.deveui.devnonce.mic1
+                   -> Check_DevNonce{if(devnonce > JSDevNonce){check_DevNonce=true}else{check_DevNonce=false};}
+                   -> if(check_DevNonce==true){Compute_mic1_1{MIC1_1=call(Aes128_cmac,NwkKey[i],[joineui,deveui,devnonce],3);} 
+                                               -> Check_mic1{check_MIC1=call(CheckMIC,mic1,MIC1_1);} 
+                                               -> if(check_MIC1==true){RecordDevNonce{JSDevNonce=devnonce;} -> JS_Join_com_2(i,j,k,devnonce)}
+                                                   else{Skip}}
+                     else{Skip};
+JS_Join_fake(i,j,k) = FakeIN[j]?Join_Request.joineui.deveui.devnonce.mic1
+                    -> Check_DevNonce{if(devnonce > JSDevNonce){check_DevNonce=true}else{check_DevNonce=false};}
+                    -> if(check_DevNonce==true){Compute_mic1_1{MIC1_1=call(Aes128_cmac,NwkKey[i],[joineui,deveui,devnonce],3);} 
+                                               -> Check_mic1{check_MIC1=call(CheckMIC,mic1,MIC1_1);} 
+                                                -> if(check_MIC1==true){RecordDevNonce{JSDevNonce=devnonce;} -> JS_Join_fake_2(i,j,k,devnonce)}
+                                                   else{Skip}}
+                      else{Skip};
+                     
+JS_Join_com_2(i,j,k,devnonce) = IncreaseJoinNonce{JoinNonce++;}
+                 -> Compute_JSIntKey{JSIntKey=call(Aes128_encrypt,NwkKey[i],[DevEUI[i]],1,6);}
+                 -> Compute_mic2{MIC2=call(Aes128_cmac2,JSIntKey,[JoinType,JoinEUI[k],devnonce,JoinNonce,NetID[j],DevAddr[i],DLSettings,RxDelay,CFList],9);}
+                 -> ComEN[j+i*JS]!Join_Accept.AesDecrypt.JoinNonce.NetID[j].DevAddr[i].DLSettings.RxDelay.CFList.MIC2
+                 -> Compute_SessionKey{AppSKey_JS=call(Aes128_encrypt,AppKey[i],[JoinNonce,JoinEUI[k],devnonce],3,2);
+                                       FNwkSIntKey_JS=call(Aes128_encrypt,NwkKey[i],[JoinNonce,JoinEUI[k],devnonce],3,1);
+                                       SNwkSIntKey_JS=call(Aes128_encrypt,NwkKey[i],[JoinNonce,JoinEUI[k],devnonce],3,3);
+                                       NwkSEncKey_JS=call(Aes128_encrypt,NwkKey[i],[JoinNonce,JoinEUI[k],devnonce],3,4)}
+                 -> ComNA[k+j*AS]!AppSKey_JS
+                 -> Skip;
+JS_Join_fake_2(i,j,k,devnonce) = IncreaseAppNonce{JoinNonce++;}
+                 -> Compute_JSIntKey{JSIntKey=call(Aes128_encrypt,NwkKey[i],[DevEUI[i]],1,6);}
+                 -> Compute_mic2{MIC2=call(Aes128_cmac2,JSIntKey,[JoinType,JoinEUI[k],devnonce,JoinNonce,NetID[j],DevAddr[i],DLSettings,RxDelay,CFList],9);}
+                 -> FakeIN[j]!Join_Accept.AesDecrypt.JoinNonce.NetID[j].DevAddr[i].DLSettings.RxDelay.CFList.MIC2
+                 -> Compute_SessionKey{AppSKey_JS=call(Aes128_encrypt,AppKey[i],[JoinNonce,JoinEUI[k],devnonce],3,2);
+                                       FNwkSIntKey_JS=call(Aes128_encrypt,NwkKey[i],[JoinNonce,JoinEUI[k],devnonce],3,1);
+                                       SNwkSIntKey_JS=call(Aes128_encrypt,NwkKey[i],[JoinNonce,JoinEUI[k],devnonce],3,3);
+                                       NwkSEncKey_JS=call(Aes128_encrypt,NwkKey[i],[JoinNonce,JoinEUI[k],devnonce],3,4)}
+                 -> ComNA[k+j*AS]!AppSKey_JS
+                 -> Skip;                 
+
+//Model application server during Join Procedure             
+AS_Join(i,j,k) = (ComNA[k+j*AS]?appskey -> Skip)[](FakeIA[k]?appskey -> Skip)[*]Skip;
+
+/*Session Phase*/
+Initial(i,j) = InitialCnt{EDFCntUp[i]=0; EDFCntDown[i]=0; JSFCntUp[i]=0; JSFCntDown[i]=0;} -> Skip;
+
+//Model end-device during Session Phase
+//ED_Session_1(i,j,k) = if(a<=5){ED_Session(i,j,k)}else{Stop};               
+ED_Session(i,j,k,InturderCond1) = Compute_mic3{EDFCntUp[i]++;ConfFCnt[i]=EDFCntDown[i];MIC3=call(Aes128_cmac2,FNwkSIntKey,[ConfirmData,EDFCntUp[i],ConfFCnt[i]],3)}
+                                -> if (InturderCond1) {ED_Session_fake(i,j,k)} else {ED_Session_com(i,j,k)};
+ED_Session_com(i,j,k) =  ComEN[j+i*JS]!AesEncrypt.AppSKey.ConfirmData.EDFCntUp[i].ConfFCnt[i].MIC3 -> (ED_Session_com_2(i,j,k)[*] Skip);
+ED_Session_fake(i,j,k) = FakeIE[i]!AesEncrypt.AppSKey.ConfirmData.EDFCntUp[i].ConfFCnt[i].MIC3 -> (ED_Session_fake_2(i,j,k)[*] Skip);
+                  
+ED_Session_com_2(i,j,k) = ComEN[j+i*JS]?AesDecrypt.appskey.ack.jsfcntdown.mic4 -> ED_Session_com_3(i,j,k,ack,jsfcntdown,mic4);
+ED_Session_fake_2(i,j,k) = FakeIE[i]?AesDecrypt.appskey.ack.jsfcntdown.mic4 -> ED_Session_fake_3(i,j,k,ack,jsfcntdown,mic4);
+
+ED_Session_com_3(i,j,k,ack,jsfcntdown,mic4) = CheckFcnt{if(jsfcntdown-EDFCntDown[i]<=MAX_FCNT_GAP){check_FCnt=true}else{check_FCnt=false};}
+					                    -> if(check_FCnt==true){Compute_mic4_1{EDFCntDown[i]=jsfcntdown; MIC4_1=call(Aes128_cmac2,SNwkSIntKey,[ack,jsfcntdown,EDFCntUp[i]],3)}
+					                                         -> Check_mic4{check_MIC4=call(CheckMIC,mic4,MIC4_1);availability=check_MIC4}
+					                                         -> Skip}
+					                       else{Skip};
+ED_Session_fake_3(i,j,k,ack,jsfcntdown,mic4) = CheckFcnt{if(jsfcntdown-EDFCntDown[i]<=MAX_FCNT_GAP){check_FCnt=true}else{check_FCnt=false};}
+					                    -> if(check_FCnt==true){Compute_mic4_1{EDFCntDown[i]=jsfcntdown; MIC4_1=call(Aes128_cmac2,SNwkSIntKey,[ack,jsfcntdown,EDFCntUp[i]],3)}
+					                                         -> Check_mic4{check_MIC4=call(CheckMIC,mic4,MIC4_1);availability=false}
+					                                         -> Skip}
+					                       else{Skip};					                       
+                     
+//Model Network Server during Session Phase
+//JS_Session_1(i,j,k) = if(b<=5){JS_Session(i,j,k)}else{Stop};                   
+JS_Session(i,j,k,InturderCond1,InturderCond2) = if (InturderCond1) {JS_Session_fake(i,j,k,InturderCond1,InturderCond2)} 
+                                                else {JS_Session_com(i,j,k,InturderCond1,InturderCond2)};
+JS_Session_com(i,j,k,InturderCond1,InturderCond2) = ComEN[j+i*JS]?AesEncrypt.appskey.confirmdata.edfntup.conffcnt.mic3 
+                                                  -> JS_Session_2(i,j,k,appskey,confirmdata,edfntup,conffcnt,mic3,InturderCond1,InturderCond2);
+JS_Session_fake(i,j,k,InturderCond1,InturderCond2) = FakeIN[j]?AesEncrypt.appskey.confirmdata.edfntup.conffcnt.mic3 
+                                                   -> JS_Session_2(i,j,k,appskey,confirmdata,edfntup,conffcnt,mic3,InturderCond1,InturderCond2);
+                  
+JS_Session_2(i,j,k,appskey,confirmdata,edfntup,conffcnt,mic3,InturderCond1,InturderCond2) = CheckSession{check_sessionKey=call(CheckSessionKey,appskey,AppSKey_JS);}
+								                    -> CheckFcnt{if(edfntup-JSFCntUp[i]<=MAX_FCNT_GAP){check_FCnt=true}else{check_FCnt=false};}
+								                    -> if(check_sessionKey==true&&check_FCnt==true){Compute_mic3_1{JSFCntUp[i]=edfntup; MIC3_1=call(Aes128_cmac2,FNwkSIntKey,[confirmdata,edfntup,conffcnt],3)}
+								                                         -> Check_mic3{check_MIC3=call(CheckMIC,mic3,MIC3_1);}
+								                                         -> if(check_MIC3==true){(if(InturderCond2) {JS_Session_fake_2(i,j,k,confirmdata,edfntup,conffcnt,mic3,InturderCond1)}
+								                                                                  else {JS_Session_com_2(i,j,k,confirmdata,edfntup,conffcnt,mic3,InturderCond1)})}
+								                                            else{Skip}}
+								                       else{Skip};
+JS_Session_com_2(i,j,k,confirmdata,edfntup,conffcnt,mic3,InturderCond1) = ComNA[k+j*AS]!AesEncrypt.AppSKey.confirmdata.edfntup.conffcnt.mic3  
+                                                                        ->(JS_Session_com2_2(i,j,k,edfntup,InturderCond1)[*]Skip);
+JS_Session_fake_2(i,j,k,confirmdata,edfntup,conffcnt,mic3,InturderCond1) = FakeIN[j]!AesEncrypt.AppSKey.confirmdata.edfntup.conffcnt.mic3 
+                                                                         -> (JS_Session_fake2_2(i,j,k,edfntup,InturderCond1)[*]Skip);
+                                                           
+JS_Session_com2_2(i,j,k,edfntup,InturderCond1) = ComNA[k+j*AS]?AesDecrypt.appskey.ack
+                             -> Compute_mic4{JSFCntDown[i]++; ConfFCnt[i]=edfntup; MIC4=call(Aes128_cmac2,SNwkSIntKey,[ack,JSFCntDown[i],ConfFCnt[i]],3)}
+                             -> if (InturderCond1) {JS_Session_fake2_3(i,j,k,MIC4)} else {JS_Session_com2_3(i,j,k,MIC4)};
+JS_Session_fake2_2(i,j,k,edfntup,InturderCond1) = FakeIN[j]?AesDecrypt.appskey.ack
+                                          -> Compute_mic4{JSFCntDown[i]++; ConfFCnt[i]=edfntup; MIC4=call(Aes128_cmac2,SNwkSIntKey,[ack,JSFCntDown[i],ConfFCnt[i]],3)}
+                                          -> if(InturderCond1) {JS_Session_fake2_3(i,j,k,MIC4)} else {JS_Session_com2_3(i,j,k,MIC4)};
+                                          
+JS_Session_com2_3(i,j,k,mic4) = ComEN[j+i*JS]!AesDecrypt.AppSKey.Ack.JSFCntDown[i].mic4 -> Skip;
+JS_Session_fake2_3(i,j,k,mic4) = FakeIN[j]!AesDecrypt.AppSKey.Ack.JSFCntDown[i].mic4 -> Skip;
+
+                           
+//Model Application Server during Session Phase                    
+//AS_Session_1(i,j,k) = if(c<=5){AS_Session(i,j,k)}else{Stop};
+AS_Session(i,j,k,InturderCond2)= if (InturderCond2) {AS_Session_3(i,j,k) [*] Skip} else {AS_Session_2(i,j,k) [*] Skip};                 
+AS_Session_2(i,j,k) = ComNA[k+j*AS]?AesEncrypt.appskey.confirmdata.edfntup.conffcnt.mic3
+					-> Compute_mic3_1{MIC3_1=call(Aes128_cmac2,FNwkSIntKey,[confirmdata,edfntup,conffcnt],3)}
+					-> Check_mic3{check_MIC3=call(CheckMIC,mic3,MIC3_1);}
+					-> if(check_MIC3==true){ComNA[k+j*AS]!AesDecrypt.AppSKey_JS.Ack -> Skip}
+					   else{Skip};
+                    
+AS_Session_3(i,j,k) = FakeIA[k]?AesEncrypt.appskey.confirmdata.edfntup.conffcnt.mic3
+					-> Compute_mic3_1{MIC3_1=call(Aes128_cmac2,FNwkSIntKey,[confirmdata,edfntup,conffcnt],3)}
+					-> Check_mic3{check_MIC3=call(CheckMIC,mic3,MIC3_1);}
+                    -> if(check_MIC3==true){FakeIA[k]!AesDecrypt.AppSKey_JS.Ack -> Skip}
+                       else{Skip};
+
+/*Intruder Modeling*/
+//Replay attacks
+Replay_JoinRequest(i,j) = FakeIE[i]?Join_Request.appeui.deveui.devnonce.mic1
+                        ->FakeIN[j]!Join_Request.appeui.deveui.oldDevNonce.mic1
+                        ->(Replay_JoinAccept(i,j)[*]Skip);
+                        
+Replay_JoinRequest_sub(i,j) = FakeIN[j]?Join_Accept.AesDecrypt.appnonce.netid.devaddr.dlsettings.rxdelay.cflist.mic2
+                            -> CheckReplayAttack{successreplayattack=true;} -> Skip;
+
+Replay_JoinAccept(i,j) = FakeIN[j]?Join_Accept.AesDecrypt.appnonce.netid.devaddr.dlsettings.rxdelay.cflist.mic2
+                       -> FakeIE[i]!Join_Accept.AesDecrypt.appnonce.netid.devaddr.dlsettings.rxdelay.cflist.mic2
+                       -> CheckReplayAttack{successreplayattack=true;} 
+                       -> Skip;
+
+Intruder_ReplayAttack_Join(i,j) = Replay_JoinRequest(i,j);
+                       
+Replay_Session(i,j) = FakeIE[i]?AesEncrypt.appskey.confirmdata.edfntup.mic3
+                    -> FakeIN[j]!AesEncrypt.appskey.confirmdata.edfntup.mic3
+                    -> (Replay_Session_sub(i,j)[*]Skip);
+                    
+Replay_Session_sub(i,j) = FakeIN[j]?AesDecrypt.appskey.ack.jsfcntdown.mic4
+                        -> CheckReplayAttack{successreplayattack=true;} -> Skip;
+
+Intruder_ReplayAttack_Session(i,j) = Replay_Session(i,j);                        
+
+//Dos attacks
+Intruder_DosAttack(i,j) = FakeIE[i]?Join_Request.appeui.deveui.devnonce.mic1
+                        -> FakeIN[j]!Join_Request.appeui.deveui.devnonce.mic1
+                        -> (Intruder_DosAttack_sub(i,j)[*]Skip);
+
+Intruder_DosAttack_sub(i,j) = FakeIN[j]?Join_Accept.AesDecrypt.appnonce.netid.devaddr.dlsettings.rxdelay.cflist.mic2
+                           -> FakeIE[i]!Join_Accept.AesDecrypt.appnonce.netid.devaddr.dlsettings.rxdelay.cflist.mic2
+                           -> CheckDoSAttack{successdosattack=true;} 
+                           -> Skip;
+//Bit Flipping attacks
+Intruder_BitFlippingAttack(j,k) = FakeIN[j]?AesEncrypt.appskey.confirmdata.edfntup.conffcnt.mic3 
+                                -> BitFlip
+                                -> FakeIA[k]!AesEncrypt.appskey.ChangeData.edfntup.conffcnt.mic3 
+                                -> (Intruder_BitFlippingAttack_sub(j,k)[*]Skip);
+                                
+Intruder_BitFlippingAttack_sub(j,k) = FakeIA[k]?AesDecrypt.appskey.ack
+                                    ->FakeIN[j]!AesDecrypt.appskey.ack
+                                    -> CheckBitFlippingAttack{successbitflipattack=true;} -> Skip;
+                                    
+//Ack Spoofing attacks
+Intruder_AckSpoofingAttack(i,j) = FakeIN[j]?AesDecrypt.appskey.ack.jsfcntdown.mic4
+                               -> FakeIE[i]?AesEncrypt.appskey.confirmdata.edfntup.mic3
+                               -> FakeIE[i]!AesDecrypt.appskey.ack.jsfcntdown.mic4
+                               -> CheckAckSpoofingAttack{successackspoofattack=true;} 
+                               -> Skip;
+//ManInTheMiddle attacks
+Intruder_MITMAttack(i,j) = FakeIE[i]?AesEncrypt.appskey.confirmdata.edfntup.conffcnt.mic3 
+                         -> CribDragging{successdataleakage=true;}
+                         -> Compute_Fakemic3{FakeMIC3=call(Aes128_cmac2,FNwkSIntKey,[ChangeData,edfntup,conffcnt],3)}
+                         -> FakeIN[j]!AesEncrypt.appskey.ChangeData.edfntup.conffcnt.FakeMIC3
+                         -> (Intruder_MITMAttack_sub(i,j)[*] Skip);
+Intruder_MITMAttack_sub(i,j) = FakeIN[j]?AesDecrypt.appskey.ack.jsfcntdown.mic4
+                             ->FakeIE[i]!AesDecrypt.appskey.ack.jsfcntdown.mic4
+                             -> CheckMITMAttack{successmitmattack=true;}
+                             -> Skip;
+                         
+LoRaWan_Join(i,j,k,InturderCond) = ED_Join(i,j,k,InturderCond) || JS_Join(i,j,k,InturderCond) || AS_Join(i,j,k);
+LoRaWan_Session_2(i,j,k,InturderCond1,InturderCond2) = ED_Session(i,j,k,InturderCond1) || JS_Session(i,j,k,InturderCond1,InturderCond2) || AS_Session(i,j,k,InturderCond2);
+LoRaWan_Session(i,j,k,InturderCond1,InturderCond2)=LoRaWan_Session_2(i,j,k,InturderCond1,InturderCond2);
+
+LoRaWan_v11() = |||i:{0..1-1}; j:{0..JS-1}; k:{0..AS-1}@(LoRaWan_Join(i,j,k,false);if(join_success==true){LoRaWan_Session(i,j,k,false,false)}else{Skip});
+
+LoRaWan_v11_ReplayAttack() = ((LoRaWan_Join(ED-2,JS-1,AS-1,true) || Intruder_ReplayAttack_Join(ED-2,JS-1));if(join_success==true){LoRaWan_Session(ED-2,JS-1,AS-1,false,false)}else{Skip});
+LoRaWan_v11_DosAttack() = ((LoRaWan_Join(ED-2,JS-1,AS-1,true) || Intruder_DosAttack(ED-2,JS-1));if(join_success==true){LoRaWan_Session(ED-2,JS-1,AS-1,false,false)}else{Skip});
+LoRaWan_v11_BitFlippingAttack() = (LoRaWan_Join(ED-2,JS-1,AS-1,false);if(join_success==true){LoRaWan_Session(ED-2,JS-1,AS-1,false,true)||Intruder_BitFlippingAttack(JS-1,AS-1)}else{Skip});
+LoRaWan_v11_AckSpoofingAttack() = (LoRaWan_Join(ED-2,JS-1,AS-1,false);if(join_success==true){LoRaWan_Session(ED-2,JS-1,AS-1,true,false)||Intruder_AckSpoofingAttack(JS-1,AS-1)}else{Skip});
+LoRaWan_v11_MITMAttack() = (LoRaWan_Join(ED-2,JS-1,AS-1,false);if(join_success==true){LoRaWan_Session(ED-2,JS-1,AS-1,true,false)||Intruder_MITMAttack(JS-1,AS-1)}else{Skip});
+//LoRaWan_v11() =LoRaWan_Join(ED-1,JS-1,AS-1);
+
+/*fundamental properties*/
+#define Integrity(check_MIC1==true && check_MIC2==true && check_MIC3==true && check_MIC4==true);
+#define SessionKey_Cojsistency(check_sessionKey==true);
+#define Availability(availability==true);
+#define Confidentiality(successdataleakage==false);
+
+/*security properties*/
+#define SuccessRelayAttack (successreplayattack==true);
+#define SuccessAckSpoofingAttack (successackspoofattack==true);
+#define SuccessDoSAttack (successdosattack==true);
+#define SuccessBitFlippingAttack (successbitflipattack==true);
+#define SuccessMITMAttack (successmitmattack==true);
+//standard LoraWAN
+#assert LoRaWan_v11() deadlockfree;
+#assert LoRaWan_v11() divergencefree;
+#assert LoRaWan_v11() |= []Integrity;
+#assert LoRaWan_v11() |= []SessionKey_Cojsistency;
+#assert LoRaWan_v11() |= []<>Availability;
+#assert LoRaWan_v11() |= []Confidentiality;
+//with Replay Attacks
+#assert LoRaWan_v11_ReplayAttack() deadlockfree;
+#assert LoRaWan_v11_ReplayAttack() reaches SuccessRelayAttack;
+#assert LoRaWan_v11_ReplayAttack() |= []!SuccessRelayAttack;
+#assert LoRaWan_v11_ReplayAttack() |= []Integrity;
+#assert LoRaWan_v11_ReplayAttack() |= []SessionKey_Cojsistency;
+#assert LoRaWan_v11_ReplayAttack() |= []<>Availability;
+#assert LoRaWan_v11_ReplayAttack() |= []Confidentiality;
+//with Dos Attacks
+#assert LoRaWan_v11_DosAttack() deadlockfree;
+#assert LoRaWan_v11_DosAttack() reaches SuccessDoSAttack;
+#assert LoRaWan_v11_DosAttack() |= []!SuccessDoSAttack;
+#assert LoRaWan_v11_DosAttack() |= []Integrity;
+#assert LoRaWan_v11_DosAttack() |= []SessionKey_Cojsistency;
+#assert LoRaWan_v11_DosAttack() |= []<>Availability;
+#assert LoRaWan_v11_DosAttack() |= []Confidentiality;
+//with Bit Flipping Attacks
+#assert LoRaWan_v11_BitFlippingAttack() deadlockfree;
+#assert LoRaWan_v11_BitFlippingAttack() reaches SuccessBitFlippingAttack;
+#assert LoRaWan_v11_BitFlippingAttack() |= []!SuccessBitFlippingAttack;
+#assert LoRaWan_v11_BitFlippingAttack() |= []Integrity;
+#assert LoRaWan_v11_BitFlippingAttack() |= []SessionKey_Cojsistency;
+#assert LoRaWan_v11_BitFlippingAttack() |= []<>Availability;
+#assert LoRaWan_v11_BitFlippingAttack() |= []Confidentiality;
+//with Ack Spoofing Attacks
+#assert LoRaWan_v11_AckSpoofingAttack() deadlockfree;
+#assert LoRaWan_v11_AckSpoofingAttack() reaches SuccessAckSpoofingAttack;
+#assert LoRaWan_v11_AckSpoofingAttack() |= []!SuccessAckSpoofingAttack;
+#assert LoRaWan_v11_AckSpoofingAttack() |= []Integrity;
+#assert LoRaWan_v11_AckSpoofingAttack() |= []SessionKey_Cojsistency;
+#assert LoRaWan_v11_AckSpoofingAttack() |= []<>Availability;
+#assert LoRaWan_v11_AckSpoofingAttack() |= []Confidentiality;
+//with Man-In-The-Middle Attacks
+#assert LoRaWan_v11_MITMAttack() deadlockfree;
+#assert LoRaWan_v11_MITMAttack() reaches SuccessMITMAttack;
+#assert LoRaWan_v11_MITMAttack() |= []!SuccessMITMAttack;
+#assert LoRaWan_v11_MITMAttack() |= []Integrity;
+#assert LoRaWan_v11_MITMAttack() |= []SessionKey_Cojsistency;
+#assert LoRaWan_v11_MITMAttack() |= []<>Availability;
+#assert LoRaWan_v11_MITMAttack() |= []Confidentiality;
+                     
