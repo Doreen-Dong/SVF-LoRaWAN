@@ -18,7 +18,7 @@ Before you begin, ensure you have the following installed:
 - PAT model checker (available：https://pat.comp.nus.edu.sg/?page_id=2660)
 ### Installation
 - Clone the repository:
-git clone https://github.com/your-username/SVF-LoRaWAN.git
+git clone https://github.com/Doreen-Dong/SVF-LoRaWAN.git
 - Launch PAT:
 Open the installed PAT application.
 - Load the .csp File:
